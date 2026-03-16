@@ -28,19 +28,10 @@ ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 
 def get_ffmpeg():
-    # Try common paths where ffmpeg might be installed
-    for path in ["ffmpeg", "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/nix/var/nix/profiles/default/bin/ffmpeg"]:
+    for path in ["ffmpeg", "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg"]:
         found = shutil.which(path)
         if found:
             return found
-    # Search nix store
-    try:
-        result = subprocess.run(["find", "/nix", "-name", "ffmpeg", "-type", "f"], capture_output=True, text=True, timeout=10)
-        lines = [l.strip() for l in result.stdout.splitlines() if l.strip() and "bin/ffmpeg" in l]
-        if lines:
-            return lines[0]
-    except Exception:
-        pass
     return None
 
 
@@ -55,8 +46,6 @@ def health():
     ffmpeg = get_ffmpeg()
     return {"ffmpeg_path": ffmpeg, "ffmpeg_found": ffmpeg is not None}
 
-
-# ── Claude proxy ────────────────────────────────────────────────────────────
 
 class ClaudeRequest(BaseModel):
     prompt: str
@@ -88,8 +77,6 @@ async def claude_proxy(req: ClaudeRequest):
 
     return res.json()
 
-
-# ── Video cutting ───────────────────────────────────────────────────────────
 
 @app.post("/cut-clip")
 async def cut_clip(
@@ -139,5 +126,7 @@ async def cut_clip(
 
 if __name__ == "__main__":
     import uvicorn
-    port = int(os.environ.get("PORT", 8000))
+    # Strip any whitespace and convert to int safely
+    raw_port = os.environ.get("PORT", "8000").strip()
+    port = int(raw_port)
     uvicorn.run(app, host="0.0.0.0", port=port)
