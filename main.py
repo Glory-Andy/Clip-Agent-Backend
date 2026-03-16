@@ -135,3 +135,9 @@ async def cut_clip(
     finally:
         if os.path.exists(input_path):
             os.remove(input_path)
+
+
+if __name__ == "__main__":
+    import uvicorn
+    port = int(os.environ.get("PORT", 8000))
+    uvicorn.run(app, host="0.0.0.0", port=port)
