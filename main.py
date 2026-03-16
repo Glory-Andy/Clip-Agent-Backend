@@ -2,6 +2,7 @@ import os
 import uuid
 import subprocess
 import tempfile
+import shutil
 import httpx
 from fastapi import FastAPI, File, UploadFile, Form, HTTPException
 from fastapi.responses import FileResponse
@@ -26,12 +27,36 @@ TEMP_DIR = tempfile.gettempdir()
 ANTHROPIC_API_KEY = os.environ.get("ANTHROPIC_API_KEY", "")
 
 
+def get_ffmpeg():
+    # Try common paths where ffmpeg might be installed
+    for path in ["ffmpeg", "/usr/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/nix/var/nix/profiles/default/bin/ffmpeg"]:
+        found = shutil.which(path)
+        if found:
+            return found
+    # Search nix store
+    try:
+        result = subprocess.run(["find", "/nix", "-name", "ffmpeg", "-type", "f"], capture_output=True, text=True, timeout=10)
+        lines = [l.strip() for l in result.stdout.splitlines() if l.strip() and "bin/ffmpeg" in l]
+        if lines:
+            return lines[0]
+    except Exception:
+        pass
+    return None
+
+
 @app.get("/")
 def root():
-    return {"status": "Clip Agent backend is running"}
+    ffmpeg = get_ffmpeg()
+    return {"status": "Clip Agent backend is running", "ffmpeg": ffmpeg or "not found"}
 
 
-# ── Claude proxy (keeps API key off the frontend) ──────────────────────────
+@app.get("/health")
+def health():
+    ffmpeg = get_ffmpeg()
+    return {"ffmpeg_path": ffmpeg, "ffmpeg_found": ffmpeg is not None}
+
+
+# ── Claude proxy ────────────────────────────────────────────────────────────
 
 class ClaudeRequest(BaseModel):
     prompt: str
@@ -73,6 +98,10 @@ async def cut_clip(
     end: float = Form(...),
     clip_title: str = Form(default="clip"),
 ):
+    ffmpeg_path = get_ffmpeg()
+    if not ffmpeg_path:
+        raise HTTPException(status_code=500, detail="FFmpeg not found on server")
+
     input_id = uuid.uuid4().hex
     ext = os.path.splitext(video.filename)[-1] or ".mp4"
     input_path = os.path.join(TEMP_DIR, f"input_{input_id}{ext}")
@@ -84,7 +113,7 @@ async def cut_clip(
             f.write(content)
 
         cmd = [
-            "ffmpeg", "-y",
+            ffmpeg_path, "-y",
             "-i", input_path,
             "-ss", str(start),
             "-to", str(end),
@@ -96,7 +125,7 @@ async def cut_clip(
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
 
         if result.returncode != 0:
-            raise HTTPException(status_code=500, detail=f"FFmpeg error: {result.stderr}")
+            raise HTTPException(status_code=500, detail=f"FFmpeg error: {result.stderr[-500:]}")
 
         safe_title = "".join(c for c in clip_title if c.isalnum() or c in " _-").strip().replace(" ", "_")
         filename = f"{safe_title or 'clip'}.mp4"
